@@ -94,7 +94,11 @@ if uploaded_file:
 
     # Convert numeric columns
     for col in ['Units', 'Market Value-2024', 'VPU']:
-        df[col] = pd.to_numeric(df[col], errors='coerce')
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+        else:
+            st.error(f"❌ Column '{col}' not found in uploaded file.")
+            st.stop()
 
     df = df.dropna(subset=['Units', 'Market Value-2024', 'VPU'])
 
@@ -245,7 +249,7 @@ if uploaded_file:
                         (subset['Property County'] == base['Property County']) &
                         (subset['Units'].between(u_min, u_max)) &
                         (subset['VPU'] < vpr) &
-                        (subset['Market Value-2024'].between(mv_min, mv_max)) 
+                        (subset['Market Value-2024'].between(mv_min, mv_max)) &
 #                        (subset['Hotel Class Order'].isin(allowed))
                     )
 
@@ -364,4 +368,3 @@ if uploaded_file:
             file_name="comparison_results_streamlit.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
-
