@@ -9,7 +9,7 @@ from io import BytesIO
 # CONFIG
 # ============================================================
 MV_TOLERANCE = 0.20  # 20% range for Market Value match
-
+U_TOLERANCE = 0.20
 # ============================================================
 # SAFE VALUE FOR EXCEL
 # ============================================================
@@ -51,20 +51,33 @@ state_tax_rates = {
 def get_state_tax_rate(state):
     return state_tax_rates.get(state, 0)
 
+# ============================================================
+# HOTEL CLASS MAPPING
+# ============================================================
+#hotel_class_map = {
+#    "Budget (Low End)": 1,
+#    "Economy (Name Brand)": 2,
+#    "Midscale": 3,
+#    "Upper Midscale": 4,
+#    "Upscale": 5,
+#    "Upper Upscale First Class": 6,
+#    "Luxury Class": 7,
+#    "Independent Hotel": 8
+#}
 
 # ============================================================
 # MATCHING HELPERS
 # ============================================================
 def get_nearest_three(df, mv, vpr):
     df = df.copy()
-    df["dist"] = ((df["Market Value-2024"] - mv)**2 + (df["2024 VPR"] - vpr)**2)**0.5
+    df["dist"] = ((df["Market Value-2024"] - mv)**2 + (df["VPU"] - vpr)**2)**0.5
     return df.sort_values("dist").head(3).drop(columns="dist")
 
 def get_least_one(df):
-    return df.sort_values(["Market Value-2024", "2024 VPR"], ascending=[True, True]).head(1)
+    return df.sort_values(["Market Value-2024", "VPU"], ascending=[True, True]).head(1)
 
 def get_top_one(df):
-    return df.sort_values(["Market Value-2024", "2024 VPR"], ascending=[False, False]).head(1)
+    return df.sort_values(["Market Value-2024", "VPU"], ascending=[False, False]).head(1)
 
 # ============================================================
 # STREAMLIT UI
@@ -80,13 +93,14 @@ if uploaded_file:
     df.columns = [col.strip() for col in df.columns]
 
     # Convert numeric columns
-    for col in ['No. of Rooms', 'Market Value-2024', '2024 VPR']:
+    for col in ['Units', 'Market Value-2024', 'VPU']:
         df[col] = pd.to_numeric(df[col], errors='coerce')
 
-    df = df.dropna(subset=['No. of Rooms', 'Market Value-2024', '2024 VPR'])
+    df = df.dropna(subset=['Units', 'Market Value-2024', 'VPU'])
 
-    df["Hotel Class Order"] = df["Hotel Class"].map(hotel_class_map)
-    df["Hotel Class Order"] = df["Hotel Class Order"].fillna(0).astype(int)
+#    df["Hotel Class Order"] = df["Hotel Class"].map(hotel_class_map)
+#    df = df.dropna(subset=["Hotel Class Order"])
+#    df["Hotel Class Order"] = df["Hotel Class Order"].astype(int)
 
     st.write("✅ Uploaded data preview:")
     st.dataframe(df.head())
@@ -106,17 +120,36 @@ if uploaded_file:
         selected_rows = df.copy()
     else:
         selected_rows = df[df['Property Address'].isin(selected_Address)]
+    # ============================================================
+    # Units TOLERANCE MODE
+    # ============================================================
+    Units_mode = st.radio(
+        "📊 Units Increase/Decrease Filter Mode",
+        ["Automated (Default 20%)", "Manual"],
+        horizontal=True
+    )
+    
+    if Units_mode == "Manual":  
+        U_TOLERANCE = st.number_input(
+            "🔽🔼 Units Increase/Decrease Filter (%)",
+            min_value=0.0,
+            max_value=500.0,
+            value=20.0,
+            step=1.0
+        ) / 100
+    else:
+        U_TOLERANCE = 0.20
 
     # ============================================================
-    # TOLERANCE MODE
+    # MV_TOLERANCE MODE
     # ============================================================
-    reduction_mode = st.radio(
+    MV_mode = st.radio(
         "📊 Market Value Increase/Decrease Filter Mode",
         ["Automated (Default 20%)", "Manual"],
         horizontal=True
     )
 
-    if reduction_mode == "Manual":
+    if MV_mode == "Manual":
         MV_TOLERANCE = st.number_input(
             "🔽🔼 Market Value Increase/Decrease Filter (%)",
             min_value=0.0,
@@ -124,14 +157,15 @@ if uploaded_file:
             value=20.0,
             step=1.0
         ) / 100
+        
     else:
-        MV_TOLERANCE = 0.20
+        MV_TOLERANCE = 0.20 
 
     # ============================================================
     # MAX MATCHES
     # ============================================================
     max_matches = st.number_input(
-        "🔢 Max Matches Per Hotel (1–10)",
+        "🔢 Property Matches List (1–10)",
         min_value=1,
         max_value=10,
         value=5,
@@ -145,7 +179,7 @@ if uploaded_file:
     # ============================================================
     if st.button("🚀 Run Matching"):
 
-        with st.spinner("🔍 Matching hotels, please wait..."):
+        with st.spinner("🔍 Matching property, please wait..."):
 
             result_records = []
 
@@ -162,96 +196,118 @@ if uploaded_file:
                 currency2 = workbook.add_format({'num_format': '$#,##0.00', 'border': 1})
 
                 match_columns = [
-                    'Property Address', 'State', 'Property County', 'Project / Hotel Name', 'Property Account No',
-                    'Owner Name/ LLC Name', 'No. of Rooms', 'Market Value-2024',
-                    '2024 VPR', 'Hotel Class', 'Hotel Class Number'
+                    'Property Address', 'State', 'Property County', 'Apartment Name', 'Property Account No',
+                    'Owner Name/ LLC Name', 'Units', 'GBA', 'Market Value-2024',
+                    'VPU'
                 ]
-
                 all_columns = list(df.columns)
                 row = 0
                 status_col = len(match_columns)
 
-                # Header
+                # Header row
                 for c, name in enumerate(match_columns):
                     worksheet.write(row, c, name, header)
                 worksheet.write(row, status_col, "Matching Results Count / Status", header)
                 worksheet.write(row, status_col + 1, "OverPaid", header)
 
-                col = status_col + 2
-                for r in range(1, max_results_per_row + 1):
-                    for colname in all_columns:
-                        clean = "Hotel Class" if colname == "Hotel Class Order" else colname
-                        worksheet.write(row, col, f"Result{r}_{clean}", header)
-                        col += 1
-                    worksheet.write(row, col, f"Result{r}_Hotel Class Number", header)
-                    col += 1
-                row += 1
+#                col = status_col + 2
+#                for r in range(1, max_results_per_row + 1):
+#                    for colname in all_columns:
+#                        clean = "Hotel Class" if colname == "Hotel Class Order" else colname
+#                        worksheet.write(row, col, f"Result{r}_{clean}", header)
+#                        col += 1
+#                    worksheet.write(row, col, f"Result{r}_Hotel Class Number", header)
+#                    col += 1
+#                row += 1
 
                 # MAIN LOOP
                 for i in range(len(selected_rows)):
                     base = selected_rows.iloc[i]
                     mv = base['Market Value-2024']
-                    vpr = base['2024 VPR']
-                    rooms = base["No. of Rooms"]
-
+                    vpr = base['VPU']
+                    Units = base["Units"]
+                    gba = base.get("GBA", 0)
                     subset = df[df.index != base.name]
 
-                    # ---------------------------------------------------
-                    # ⛔ HOTEL CLASS CONDITION REMOVED HERE COMPLETELY
-                    # ---------------------------------------------------
+#                    allowed = {
+#                        1:[1,2,3],2:[1,2,3,4],3:[2,3,4,5],4:[3,4,5,6],
+#                        5:[4,5,6,7],6:[5,6,7,8],7:[6,7,8],8:[7,8]
+#                    }.get(base["Hotel Class Order"], [])
+
                     mv_min = mv * (1 - MV_TOLERANCE)
                     mv_max = mv * (1 + MV_TOLERANCE)
+                    u_min = Units * (1 - U_TOLERANCE)
+                    u_max = Units * (1 + U_TOLERANCE)
+                  
 
                     mask = (
                         (subset['State'] == base['State']) &
                         (subset['Property County'] == base['Property County']) &
-                        (subset['No. of Rooms'] < rooms) &
-                        (subset['2024 VPR'] < vpr) &
-                        (subset['Market Value-2024'].between(mv_min, mv_max))
+                        (subset['Units'].between(u_min, u_max)) &
+                        (subset['VPU'] < vpr) &
+                        (subset['Market Value-2024'].between(mv_min, mv_max)) &
+#                        (subset['Hotel Class Order'].isin(allowed))
                     )
 
                     matches = subset[mask].drop_duplicates(
-                        subset=['Project / Hotel Name','Property Address','Owner Name/ LLC Name']
+                        subset=['Apartment Name','Property Address','Owner Name/ LLC Name']
                     )
 
                     result_records.append("Match" if not matches.empty else "No_Match_Case")
 
                     # Write base row
-                    for c, colname in enumerate(match_columns):
-                        if colname == "Hotel Class Number":
-                            val = base["Hotel Class Order"]
-                            worksheet.write(row, c, safe_excel_value(val), border)
-                        else:
-                            val = safe_excel_value(base[colname])
-                            if colname == "Market Value-2024":
-                                worksheet.write(row, c, val, currency0)
-                            elif colname == "2024 VPR":
-                                worksheet.write(row, c, val, currency2)
-                            else:
-                                worksheet.write(row, c, val, border)
+#                    for c, colname in enumerate(match_columns):
+#                        if colname == "Hotel Class Number":
+#                            val = base["Hotel Class Order"]
+#                            worksheet.write(row, c, safe_excel_value(val), border)
+#                        else:
+#                            val = safe_excel_value(base[colname])
+#                            if colname == "Market Value-2024":
+#                                worksheet.write(row, c, val, currency0)
+#                            elif colname == "2024 VPR":
+#                                worksheet.write(row, c, val, currency2)
+#                            else:
+#                                worksheet.write(row, c, val, border)
 
+                    # Write base row
+                    for c, colname in enumerate(match_columns):
+                        val = safe_excel_value(base[colname])
+                        if colname == "Market Value-2024":
+                            worksheet.write(row, c, val, currency0)
+                        elif colname == "VPU":
+                            worksheet.write(row, c, val, currency2)
+                        else:
+                            worksheet.write(row, c, val, border)
+#--------------------------------------------------------------
                     if not matches.empty:
                         nearest = get_nearest_three(matches, mv, vpr)
                         rem = matches.drop(nearest.index)
 
+                        # --------- LEAST LOGIC ADJUSTED FOR MAX_MATCHES ----------
                         remaining_slots = max_matches - len(nearest)
                         if remaining_slots > 0:
                             least = rem.sort_values(
-                                ["Market Value-2024", "2024 VPR"], ascending=[True, True]
+                                ["Market Value-2024", "VPU"], ascending=[True, True]
                             ).head(remaining_slots - 1)
                         else:
                             least = pd.DataFrame()
-
                         rem = rem.drop(least.index)
                         top = get_top_one(rem)
 
                         selected = pd.concat([nearest, least, top]).head(max_matches).reset_index(drop=True)
+                        # --------------------------------------------------------
 
                         worksheet.write(row, status_col, f"Total: {len(matches)} | Selected: {len(selected)}", border)
 
-                        median_vpr = selected["2024 VPR"].head(3).median()
+                        median_vpr = selected["VPU"].head(3).median()
                         state_rate = get_state_tax_rate(base["State"])
-                        assessed = median_vpr * rooms * state_rate
+                        
+                        # Check if 'Apartment Name' or 'Units' is blank
+                        if pd.isna(base["Apartment Name"]) or pd.isna(base["Units"]):
+                            assessed = median_vpr * gba * state_rate
+                        else:
+                            assessed = median_vpr * base["Units"] * state_rate
+                            
                         subject_tax = mv * state_rate
                         overpaid = subject_tax - assessed
                         worksheet.write(row, status_col + 1, safe_excel_value(overpaid), currency2)
@@ -261,40 +317,40 @@ if uploaded_file:
                             if r < len(selected):
                                 row_df = selected.iloc[r]
                                 for colname in all_columns:
-...                                     val = safe_excel_value(row_df[colname])
-...                                     if colname == "Market Value-2024":
-...                                         worksheet.write(row, col, val, currency0)
-...                                     elif colname == "2024 VPR":
-...                                         worksheet.write(row, col, val, currency2)
-...                                     elif colname == "Hotel Class Order":
-...                                         label = next((k for k,v in hotel_class_map.items() if v == row_df[colname]), "")
-...                                         worksheet.write(row, col, safe_excel_value(label), border)
-...                                         col += 1
-...                                         worksheet.write(row, col, safe_excel_value(row_df[colname]), border)
-...                                     else:
-...                                         worksheet.write(row, col, val, border)
-...                                     col += 1
-...                             else:
-...                                 for colname in all_columns:
-...                                     worksheet.write(row, col, "", border)
-...                                     col += 1
-...                     else:
-...                         worksheet.write(row, status_col, "No_Match_Case", border)
-...                         worksheet.write(row, status_col + 1, "", border)
-... 
-...                     row += 1
-... 
-...                 worksheet.freeze_panes(1, 0)
-... 
-...             processed_data = output.getvalue()
-...             preview_df = pd.read_excel(BytesIO(processed_data))
-... 
-...         st.success("✅ Matching Completed")
-...         st.write("📊 Full Excel Output Preview:")
-...         st.dataframe(preview_df)
-... 
-...         total = len(result_records)
-...         matches_found = result_records.count("Match")
+                                    val = safe_excel_value(row_df.get(colname, ""))
+                                    if colname == "Market Value-2024":
+                                        worksheet.write(row, col, val, currency0)
+                                    elif colname == "VPU":
+                                        worksheet.write(row, col, val, currency2)
+#                                    elif colname == "Hotel Class Order":
+#                                        label = next((k for k,v in hotel_class_map.items() if v == row_df[colname]), "")
+#                                        worksheet.write(row, col, safe_excel_value(label), border)
+#                                        col += 1
+#                                        worksheet.write(row, col, safe_excel_value(row_df[colname]), border)
+#                                    else:
+#                                        worksheet.write(row, col, val, border)
+#                                    col += 1
+                            else:
+                                for colname in all_columns:
+                                    worksheet.write(row, col, "", border)
+                                    col += 1
+                    else:
+                        worksheet.write(row, status_col, "No_Match_Case", border)
+                        worksheet.write(row, status_col + 1, "", border)
+
+                    row += 1
+
+                worksheet.freeze_panes(1, 0)
+
+            processed_data = output.getvalue()
+            preview_df = pd.read_excel(BytesIO(processed_data))
+
+        st.success("✅ Matching Completed")
+        st.write("📊 Full Excel Output Preview:")
+        st.dataframe(preview_df)
+
+        total = len(result_records)
+        matches_found = result_records.count("Match")
         no_matches = result_records.count("No_Match_Case")
 
         st.write("🏁 **Summary**:")
