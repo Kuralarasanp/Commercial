@@ -89,7 +89,7 @@ st.markdown("Upload your Excel file, and the app will generate comparison result
 uploaded_file = st.file_uploader("📤 Upload Excel File", type=["xlsx"])
 
 if uploaded_file:
-    df = pd.read_excel(uploaded_file, sheet_name='YourSheetName')
+    df = pd.read_excel(uploaded_file)
     df.columns = [col.strip() for col in df.columns]
 
     # Convert numeric columns
