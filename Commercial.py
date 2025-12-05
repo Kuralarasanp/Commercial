@@ -249,7 +249,7 @@ if uploaded_file:
                         (subset['Property County'] == base['Property County']) &
                         (subset['Units'].between(u_min, u_max)) &
                         (subset['VPU'] < vpr) &
-                        (subset['Market Value-2024'].between(mv_min, mv_max)) &
+                        (subset['Market Value-2024'].between(mv_min, mv_max)) 
 #                        (subset['Hotel Class Order'].isin(allowed))
                     )
 
