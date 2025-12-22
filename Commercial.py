@@ -237,13 +237,16 @@ if uploaded_file:
                         selected = pd.concat([nearest, least, top]).head(max_matches).reset_index(drop=True)
 
                         worksheet.write(row, status_col, f"Total: {len(matches)} | Selected: {len(selected)}", border)
-
-                        median_vpr = selected["VPU"].head(3).median()
-                        state_rate = get_state_tax_rate(base["State"])
-                        assessed = median_vpr * gba * state_rate
-                        subject_tax = mv * state_rate
-                        overpaid = subject_tax - assessed
-                        worksheet.write(row, status_col + 1, safe_excel_value(overpaid), currency2)
+                        
+                        if len(selected) >= 2:
+                            median_vpr = selected["VPU"].head(3).median()
+                            state_rate = get_state_tax_rate(base["State"])
+                            assessed = median_vpr * gba * state_rate
+                            subject_tax = mv * state_rate
+                            overpaid = subject_tax - assessed
+                            worksheet.write(row, status_col + 1, safe_excel_value(overpaid), currency2)
+                        else:
+                            worksheet.write(row, status_col + 1, "", border)
 
                         col = status_col + 2
                         for r in range(max_matches):
@@ -292,3 +295,4 @@ if uploaded_file:
             file_name="comparison_results_streamlit.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
